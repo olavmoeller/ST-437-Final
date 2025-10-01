@@ -6,6 +6,8 @@ library(ggpubr)
 library(bslib)
 library(ggridges)
 library(reactable)
+library(htmlwidgets)
+library(webshot)
 
 # Reading the data that I made from scraping in python
 data <- read_csv('osu_pitch_data.csv', show_col_types = FALSE) |>
@@ -44,14 +46,9 @@ ui <- page_sidebar(
                 selected = "Wyatt Queen"),
     
     # Allowing the user to select the dates they are interested in, defaulting to all
-    dateRangeInput(inputId = "date",
-                   label = "Select Date Range:",
-                   startview = "month",
-                   format = "mm/dd",
-                   start = mdy("2/14/2025"),
-                   end = mdy("3/2/2025"),
-                   min = mdy("2/14/2025"),
-                   max = mdy("3/2/2025"))
+    # Details are in the server as it reacts to the selected pitcher
+    checkboxGroupInput("games",
+                       "Select Games:")
   ),
   
   # Creating the tabs that will be in the graphic. 
@@ -197,9 +194,17 @@ ui <- page_sidebar(
                              standard projectile motion, where all ball movement is purely created by gravity. 
                              When throwing a baseball, the pitcher will impart spin on the ball, which will affect 
                              the flight of the ball through the air, through things like the Magnus force and seam effects."),
+                           p("The x-axis on this plot is Horizontal Break (HB), and the y-axis is Induced Vertical Break (IVB),
+                             each of which are averaged on the pitch metric table with further descriptions there."),
                            p("This is why many of the points are far from the origin of the plot, as baseball pitchers 
                              are often trying to make the ball move in unique ways. This plot is a way to 'see' movement 
-                             of pitches without watching the actual flight of the ball, or graphing the 3D trajectory.")
+                             of pitches without watching the actual flight of the ball, or graphing the 3D trajectory."),
+                           p("A use case for this can be seeing how pitcher's movement changes between games. For example, 
+                             if Wyatt Queen is selected, you can compare the points in yellow (fastballs) between 2/22 and 3/1, 
+                             by using the checkboxes on the left. It can be seen that on 2/22, the fastballs are further to the right, 
+                             indicating more horizontal movement, as compared to 3/1. This could be due to a number of factors, including temperature 
+                             and a miscalibrated radar, but it could also indicate that the pitcher was trying to make the baseball move in 
+                             different ways. By seeing which day returned better results, coaches could determine which shape is more desirable.")
                            
                          )
                        )
@@ -226,9 +231,9 @@ ui <- page_sidebar(
                            p("This plot can be used to show how accurate a pitcher is at throwing within/around the strike zone, 
                              and where they tend to throw a certain pitch type, as that is still stored in the color of the dot. 
                              For example, if the pitcher selected is Wyatt Queen, it can be observed that the yellow dots, representing fastballs, 
-                             are generally concentrated near the top of the strike zone. However, the dark red dots that represent curveballs are 
+                             are generally concentrated near the top of the strike zone. However, the reddish dots that represent changeups are 
                              concentrated near the bottom of the zone. This indicates that he likely intends to throw each different type of 
-                             pitch in a different area. From a baseball standpoint, this also makes sense, as curveballs generally 
+                             pitch in a different area. From a baseball standpoint, this also makes sense, as changeups generally 
                              perform better when they are near the bottom of the zone, so Wyatt is doing a good job of locating that pitch.")
                            
                          )
@@ -243,25 +248,53 @@ ui <- page_sidebar(
                          # And another call to the server
                          reactableOutput("pitch_table_large"),
                          
+                         # Another download button
+                         downloadButton("download_table", "Download Table as Image", class = "btn-primary", style = "margin-bottom: 1em;"),
+                         
+                         
                          # And one more description, even bigger this time
                          div(
                            style = "margin-top: 1em; font-size: 1.1em; line-height: 1.6;",
                            p("This table takes some key metrics that are tracked on each pitch, and then summarizes them across the entire pitch type. 
                              Pitches are intended to be similar to each other, so we look at the average in each group to see what is expected of each 
                              kind of pitch."),
-                           p("First, we look at the count of each pitch, to see and understand its sample size. We then also compare that pitch's 
-                             usage to all pitches thrown, to see how often the pitcher chooses to throw that pitch. The velo column calculates the 
-                             pitch's average velocity, which can somewhat be seen in the ridge plot, but it is also nice to see the actual number. 
-                             The next two columns, IVB and HB, describe the movement as seen on the Short Form movement plot. IVB stands for 
-                             induced vertical break, which means that this value is the amount of movement in the vertical direction, relative 
-                             to gravity. So if a projectile only responding to gravity would have dropped 40 inches over the 60 feet of a baseball pitch, 
-                             but this pitch dropped just 25 inches, it would have a value of 15 (-25-(-40)) inches of induced vertical break. 
-                             Similarly, HB is horizontal break, which is just deviation from a straight line of the initial throw. If I throw a ball 
-                             directly towards a target, and along the way it moves 10 inches to the left, that would be a  -10 inches HB, as the scale 
-                             is based on the viewpoint of the thrower/pitcher. The final column is spin, which is the rate in which the ball is 
-                             spinning, in rpms. This can be used to explain why the ball moves, as high spin leads to a higher magnus force, and can 
-                             show how good the pitcher is at manipulating the baseball when they throw it.")
+                           p("Explanation for the columns:"),
+                           p("- Count: The number of each pitch type thrown, during the selected days."),
+                           p("- Pitch%: The percentage of all pitches thrown that were that pitch type."),
+                           p("- Velo: The pitch type's average velocity. This can be estimated from the ridge plot, but it's nice to have the actual number."),
+                           p("- IVB: Induced Vertical Break (inches), by pitch type. This describes the vertical movement of the ball after being thrown, compared to what would be expected by gravity. Gravity will make any projectile, like a baseball, drop. If the baseball drops less than expected by gravity, it would have a positive IVB, and if it drops more, then it would be negative."),
+                           p("- HB: Horizontal Break (inches), by pitch type. The horizontal break of the ball is the movement of the ball compared to the initial velocity vector, in the horizontal direction. If the ball essentially takes a curving left turn during the motion, it would return a negative value, and a right turn would return a positive value."),
+                           p("- Spin: The rate in which the ball is spinning, in RPMs. When a baseball is thrown, it will have some amount of spin on it by the way we throw objects, and this is measured in RPMs. Certain pitch types will often have more or less spin, and some people are better or worse at spinning the ball.")
                            
+                         )
+                       )
+              ),
+              
+              # ONE MORE TAB
+              tabPanel("Info",
+                       div(
+                         style = "padding: 2em; max-width: 1000px; margin: auto;",
+                         div(
+                           style = "margin-top: 1em; font-size: 1.1em; line-height: 1.6;",
+                           h4("Summary"),
+                           p("This project was to recreate an app I had previously made in python using streamlit, but to use that idea to explore R and shiny data visualization tools.
+                             Previously, in python, I had used matplotlib to make the plots, while here I was able to explore ggplot further to see if some of the same plotting methods existed.
+                             ggplot ended up being a lot smoother and easier to use, and did a really good job of recreating what I had previously done.
+                             I wanted to make the main page have a simple and sleek look to it, and then allow the viewer to expand on the plot or details that they were interested in learning more about, which shiny's cards functionality did quite well."),
+                           h4("Data"),
+                           p("This data was scraped using python from MLB-Stats API, and I then saved the information in python and downloaded it as a CSV, which I used here.
+                             OSU Played 10 games in stadiums that were equipped with Statcast, which is MLB's data tracking platform, which published this data publicly.
+                             Headshots, bio information (height/weight), and the beaver logo were scraped from the OSU baseball roster site, in python, and then stored as a CSV."),
+                           h4("Data Cleaning"),
+                           p("A quick note about data cleaning: The data was in a pretty easy to use format after scraping it, so there wasn't much manipulation needed.
+                             However, the pitch classification into different pitch types (four-seam fastball, curveball, etc.) in the MLB-Stats API was originally done using an MLB proprietary machine learning model, which isn't always accurate, as it isn't trained on college baseball data, which is what this is.
+                             With this, I manually changed the pitch classification into what I know each pitch should be, based on my specific knowledge of baseball and my knowledge of the players themselves.
+                             This was done on a pitch-by-pitch basis, using a combination of factors like velocity, movement, spin rate, and spin axes, which I wasn't able to do through code. 
+                             Thus, this isn't represented anywhere in the code, as it was done in the CSV itself. 
+                             This is standard practice in baseball analytics, as for OSU baseball currently, we manually input the pitch type for each pitch based on these characteristics. 
+                             None of the actual measurements were altered, just the groupings, which had been automatically assigned in the first place anyways, so I don't feel this is an issue, but I wanted to make it clear."),
+                           h4("Variables/Information"),
+                           p("All the variables and information are described in the Pitch Metric Table tab, or on the relevant plot tabs.")
                          )
                        )
               )
@@ -273,19 +306,42 @@ ui <- page_sidebar(
 # I had to include the session, in addition to the usual input/output, so that I could make clicking something jump around in the app
 server <- function(input, output, session) {
   
-  # Reactively filtering our data by the inputs
-  filt <- reactive({
+  # Reactively filtering our data by the pitcher, so we can find what dates they pitched
+  pitch_selected <- reactive({
     data |>
       
       # Filtering by selected pitcher
       filter(pitcher_name == input$pname) |>
       
-      # Filtering by dates (it annoys me that you can't do date1 <= date <= date2 but alas)
-      filter(game_date >= input$date[1] & game_date <= input$date[2]) |>
-      
       # Releveling the pitch_type and pitch_description by which pitch appears most often
       mutate(pitch_type = fct_rev(fct_infreq(pitch_type)),
              pitch_description = fct_rev(fct_infreq(pitch_description)))
+  })
+  
+  # Updating the checkboxes to have the dates that the pitcher played in
+  observe({
+    dates = sort(unique(pitch_selected()$game_date))
+    updateCheckboxGroupInput(session, 
+                             "games",
+                             label = NULL,
+                             choices = dates,
+                             selected = dates)
+  })
+  
+  # Counting the number of games that are selected
+  game_count <- reactive({
+    length(input$games)
+  })
+  
+  # Making the selections into a list
+  game_dates <- reactive({
+    input$games
+  })
+  
+  # Filtering our data by the selected games
+  filt <- reactive({
+    pitch_selected() |>
+      filter(game_date %in% game_dates())
   })
   
   # Making the output for the headshot image, and making it link to the player's OSU roster link
@@ -318,9 +374,7 @@ server <- function(input, output, session) {
     throws <- selected_row$handedness
     height <- selected_row$height
     weight <- selected_row$weight
-    start_date <- format(input$date[1], "%b %d")
-    end_date <- format(input$date[2], "%b %d")
-    game_count <- length(unique(filt()$game_date))
+    
     
     # Formatting and making the output how we want it
     div(
@@ -336,8 +390,7 @@ server <- function(input, output, session) {
             style = "font-size: clamp(12px, 2vh, 18px); line-height: 1; margin-bottom: 0.4vh;"),
         
         # Showing the selected dates
-        div(paste0(start_date, " to ", end_date,
-                   " — ", game_count, ifelse(game_count == 1, " game", " games")),
+        div(paste0(game_count(), ifelse(game_count() == 1, " game", " games")),
             style = "font-size: clamp(12px, 2vh, 18px); line-height: 1; margin-bottom: 0.4vh;"),
         
         # Adding a note for the reader that they can click for more info
@@ -468,58 +521,60 @@ server <- function(input, output, session) {
   
   # Making the pitch table, with the reactable package. 
   # It's generally meant for interactive tables, but I felt it looked nice, even if I didn't need/want it to be interactable
-  output$pitch_table <- renderReactable({
+  
+  data_table_large <- reactive({reactable(
     
-    #
-    reactable(
+    # Passing the table our data
+    pitch_summary(),
+    
+    # Making it compact, works better on smaller screens
+    compact = TRUE,
+    
+    # Since we click on the table to see it but bigger, we don't want/need it to be sortable here
+    sortable = FALSE,
+    
+    # Formatting, making a minimum width and height of each column, and aligning it
+    defaultColDef = colDef(
+      minWidth = 50,
+      align = "center",
+      style = list(minHeight = "1.5em")
+    ),
+    
+    # Making the columns
+    columns = list(
       
-      # Passing the table our data
-      pitch_summary(),
-      
-      # Making it compact, works better on smaller screens
-      compact = TRUE,
-      
-      # Since we click on the table to see it but bigger, we don't want/need it to be sortable here
-      sortable = FALSE,
-      
-      # Formatting, making a minimum width and height of each column, and aligning it
-      defaultColDef = colDef(
-        minWidth = 50,
-        align = "center",
-        style = list(minHeight = "1.5em")
-      ),
-      
-      # Making the columns
-      columns = list(
+      # Making the pitch name column bigger, so it can show the whole description
+      `Pitch Name` = colDef(
+        minWidth = 150,
         
-        # Making the pitch name column bigger, so it can show the whole description
-        `Pitch Name` = colDef(
-          minWidth = 150,
-          
-          # Mapping the color of each pitch type to the background color, and then adding a white outline around text for readability
-          style = function(value) {
-            pitch_key <- as.character(value)
-            color <- pitch_colors[pitch_key]
-            style_str <- paste0(
-              "background-color: ", color, ";",
-              "color: black;",
-              "font-weight: bold;",
-              "padding: 6px;",
-              "border-radius: 4px;",
-              "text-align: center;",
-              "text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;"
-            )
-            style_str
-          }
-        )
-      ),
-      
-      # The table is just one page, so we don't need multiple
-      pagination = FALSE,
-      
-      # Scaling the column to be at its full width
-      fullWidth = TRUE
-    )
+        # Mapping the color of each pitch type to the background color, and then adding a white outline around text for readability
+        style = function(value) {
+          pitch_key <- as.character(value)
+          color <- pitch_colors[pitch_key]
+          style_str <- paste0(
+            "background-color: ", color, ";",
+            "color: black;",
+            "font-weight: bold;",
+            "padding: 6px;",
+            "border-radius: 4px;",
+            "text-align: center;",
+            "text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;"
+          )
+          style_str
+        }
+      )
+    ),
+    
+    # The table is just one page, so we don't need multiple
+    pagination = FALSE,
+    
+    # Scaling the column to be at its full width
+    fullWidth = TRUE
+  )
+  })
+  
+  output$pitch_table <- renderReactable({
+    data_table_large()
   })
   
   # For the next bigger versions of the plots, I'm making them reactive objects first, then calling the render plot on them, so I can reuse the reactive object in the download button
@@ -533,7 +588,7 @@ server <- function(input, output, session) {
       theme_minimal(base_size = 16) +
       theme(legend.position = "none")
   })
-
+  
   # Making the break plot, but bigger: Also similar, but bigger, and with a legend, and axes labels
   breakPlot_large <- reactive({
     ggplot(filt(), aes(x = hb, y = ivb)) +
@@ -596,12 +651,8 @@ server <- function(input, output, session) {
     # Finding the pitcher's last name
     last_name <- tolower(strsplit(input$pname, " ")[[1]][2])
     
-    # Making the start and end dates in the month day format
-    start_date <- format(input$date[1], "%m-%d")
-    end_date <- format(input$date[2], "%m-%d")
-    
     # Creating the title, given plot type
-    paste0(plot_type, "_plot_", last_name, "_", start_date, "_to_", end_date, ".png")
+    paste0(plot_type, "_plot_", last_name, ".png")
   }
   
   # Downloading the Velocity plot
@@ -631,6 +682,27 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       ggsave(file, plot = locationPlot_large(), width = 8, height = 6, dpi = 300)
+    }
+  )
+  
+  # Downloading table
+  output$download_table <- downloadHandler(
+    filename = function() {
+      make_filename("metric_table")
+    },
+    content = function(file) {
+      # Temporary file paths
+      tmp_html <- tempfile(fileext = ".html")
+      tmp_png <- tempfile(fileext = ".png")
+      
+      # Save reactable as HTML widget
+      saveWidget(data_table_large(), tmp_html, selfcontained = TRUE)
+      
+      # Take snapshot using webshot
+      webshot(tmp_html, tmp_png)
+      
+      # Copy the PNG to the file path shiny expects for download
+      file.copy(tmp_png, file)
     }
   )
   
